@@ -50,3 +50,29 @@ def test_get_vm_by_name_raises_not_found_when_no_match():
     with patch.object(proxmox, "_query", return_value=resources):
         with pytest.raises(SaltCloudNotFound):
             proxmox._get_vm_by_name("k3s-worker-01")
+
+def test_list_nodes_full_skips_entries_without_name_key():
+    """
+    list_nodes_full should skip VM/CT entries with no 'name' key
+    instead of raising KeyError, and should not fetch per-VM config
+    for entries it's going to skip anyway.
+    """
+    resources = [
+        {"type": "qemu", "vmid": 100, "node": "pvehostname"},  # unnamed
+        {"type": "lxc", "name": "k3s-worker-01", "vmid": 21101, "node": "pvehostname"},
+    ]
+    vm_config = {"hostname": "k3s-worker-01"}
+
+    def fake_query(method, path, data=None):
+        if path == "cluster/resources":
+            return resources
+        return vm_config
+
+    with patch.object(proxmox, "_query", side_effect=fake_query) as mock_query:
+        result = proxmox.list_nodes_full()
+
+    assert "k3s-worker-01" in result
+    assert result["k3s-worker-01"]["config"] == vm_config
+
+    config_calls = [c for c in mock_query.call_args_list if "config" in c.args[1]]
+    assert len(config_calls) == 1
